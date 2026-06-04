@@ -1,0 +1,36 @@
+version: '3.8'
+
+networks:
+  paygate-network:
+    driver: bridge
+
+services:
+  traefik:
+    image: traefik:v3.0
+    container_name: paygate-traefik
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    networks:
+      - paygate-network
+
+  scylladb:
+    image: scylladb/scylla:5.4
+    container_name: paygate-scylladb
+    command: --smp 1 --memory 1G --overprovisioned 1 --developer-mode 1
+    ports:
+      - "9042:9042"
+    volumes:
+      - scylla-data:/var/lib/scylla
+    networks:
+      - paygate-network
+
+volumes:
+  scylla-data:
