@@ -1,0 +1,257 @@
+definitions:
+  models.ConfirmPaymentRequest:
+    properties:
+      bank_session_id:
+        example: bank_sys_abc123def456
+        type: string
+      token:
+        example: 3ds_token_xyz789
+        type: string
+    type: object
+  models.InitPaymentRequest:
+    properties:
+      amount:
+        example: 1000
+        type: integer
+      currency:
+        example: RUB
+        type: string
+      order_id:
+        example: order-12345
+        type: string
+      user_id:
+        example: user-67890
+        type: string
+    type: object
+  models.InitPaymentResponse:
+    properties:
+      bank_session_id:
+        example: bank_sys_abc123def456
+        type: string
+      status:
+        example: INITIATED
+        type: string
+      three_ds_url:
+        example: https://3ds.bank.com/auth/sess_123
+        type: string
+    type: object
+  models.PaymentStatusResponse:
+    properties:
+      amount:
+        example: 1000
+        type: integer
+      bank_session_id:
+        example: bank_sys_abc123def456
+        type: string
+      currency:
+        example: RUB
+        type: string
+      status:
+        example: COMPLETED
+        type: string
+    type: object
+  models.RefundRequest:
+    properties:
+      amount:
+        example: 500
+        type: integer
+      bank_session_id:
+        example: bank_sys_abc123def456
+        type: string
+    type: object
+  models.WebhookPayload:
+    properties:
+      bank_session_id:
+        type: string
+      signature:
+        type: string
+      status:
+        type: string
+      timestamp:
+        type: string
+    type: object
+info:
+  contact: {}
+paths:
+  /api/v1/payments/confirm:
+    post:
+      consumes:
+      - application/json
+      description: Подтверждает платёж после успешной 3DS-аутентификации
+      parameters:
+      - description: 3DS токен
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.ConfirmPaymentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.PaymentStatusResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Подтверждение платежа (3DS)
+      tags:
+      - Payments
+  /api/v1/payments/init:
+    post:
+      consumes:
+      - application/json
+      description: Создаёт новый платёж и возвращает session_id для 3DS-аутентификации
+      parameters:
+      - description: Данные платежа
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.InitPaymentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.InitPaymentResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Инициализация платежа
+      tags:
+      - Payments
+  /api/v1/payments/refund:
+    post:
+      consumes:
+      - application/json
+      description: Инициирует возврат средств по платежу
+      parameters:
+      - description: Данные возврата
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.RefundRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.PaymentStatusResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Возврат платежа
+      tags:
+      - Payments
+  /api/v1/payments/status:
+    get:
+      description: Возвращает текущий статус платежа по bank_session_id
+      parameters:
+      - description: Идентификатор сессии банка
+        in: query
+        name: bank_session_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.PaymentStatusResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Статус платежа
+      tags:
+      - Payments
+  /api/v1/webhooks/bank:
+    post:
+      consumes:
+      - application/json
+      description: Обрабатывает входящие уведомления от банка (статус платежа)
+      parameters:
+      - description: Уведомление от банка
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.WebhookPayload'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Webhook от банка
+      tags:
+      - Webhooks
+swagger: "2.0"

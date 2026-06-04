@@ -1,0 +1,26 @@
+http:
+  routers:
+    backend:
+      rule: "PathPrefix(`/api/`) || PathPrefix(`/swagger/`) || Path(`/health`)"
+      service: backend
+      priority: 10
+      entryPoints:
+        - web
+
+    frontend:
+      rule: "PathPrefix(`/`)"
+      service: frontend
+      priority: 1
+      entryPoints:
+        - web
+
+  services:
+    backend:
+      loadBalancer:
+        servers:
+          - url: "http://paygate-backend:8081"
+
+    frontend:
+      loadBalancer:
+        servers:
+          - url: "http://paygate-frontend:80"
