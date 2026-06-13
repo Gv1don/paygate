@@ -14,18 +14,20 @@ const (
 )
 
 type Payment struct {
-	BankSessionID  string        `json:"bank_session_id"`
-	OrderID        string        `json:"order_id"`
-	UserID         string        `json:"user_id"`
-	Amount         int64         `json:"amount"`
-	Currency       string        `json:"currency"`
-	Status         PaymentStatus `json:"status"`
-	ThreeDSURL     string        `json:"three_ds_url,omitempty"`
-	FailReason     string        `json:"fail_reason,omitempty"`
-	ReturnURL      string        `json:"return_url,omitempty"`
-	IdempotencyKey string        `json:"idempotency_key,omitempty"`
-	CreatedAt      time.Time     `json:"created_at"`
-	UpdatedAt      time.Time     `json:"updated_at"`
+	BankSessionID        string        `json:"bank_session_id"`
+	OrderID              string        `json:"order_id"`
+	UserID               string        `json:"user_id"`
+	Amount               int64         `json:"amount"`
+	Currency             string        `json:"currency"`
+	Status               PaymentStatus `json:"status"`
+	ThreeDSURL           string        `json:"three_ds_url,omitempty"`
+	ThreeDSServerTransID string        `json:"three_ds_server_trans_id,omitempty"`
+	CReq                 string        `json:"creq,omitempty"`
+	FailReason           string        `json:"fail_reason,omitempty"`
+	ReturnURL            string        `json:"return_url,omitempty"`
+	IdempotencyKey       string        `json:"idempotency_key,omitempty"`
+	CreatedAt            time.Time     `json:"created_at"`
+	UpdatedAt            time.Time     `json:"updated_at"`
 }
 
 func (p *Payment) IsTerminal() bool {
@@ -68,10 +70,11 @@ type InitPaymentRequest struct {
 }
 
 type InitPaymentResponse struct {
-	BankSessionID string `json:"bank_session_id"`
-	PaymentURL    string `json:"payment_url"`
-	ThreeDSURL    string `json:"three_ds_url,omitempty"`
-	Status        string `json:"status"`
+	BankSessionID        string `json:"bank_session_id"`
+	PaymentURL           string `json:"payment_url"`
+	ThreeDSURL           string `json:"three_ds_url,omitempty"`
+	ThreeDSServerTransID string `json:"three_ds_server_trans_id,omitempty"`
+	Status               string `json:"status"`
 }
 
 type ThreeDSReturnRequest struct {
@@ -85,12 +88,13 @@ type ConfirmPaymentRequest struct {
 }
 
 type PaymentStatusResponse struct {
-	BankSessionID string `json:"bank_session_id"`
-	Status        string `json:"status"`
-	Amount        int64  `json:"amount"`
-	Currency      string `json:"currency"`
-	OrderID       string `json:"order_id"`
-	ReturnURL     string `json:"return_url,omitempty"`
+	BankSessionID        string `json:"bank_session_id"`
+	Status               string `json:"status"`
+	Amount               int64  `json:"amount"`
+	Currency             string `json:"currency"`
+	OrderID              string `json:"order_id"`
+	ReturnURL            string `json:"return_url,omitempty"`
+	ThreeDSServerTransID string `json:"three_ds_server_trans_id,omitempty"`
 }
 
 type RefundRequest struct {

@@ -28,6 +28,7 @@ import (
 
 	_ "paygate/backend/docs"
 
+	"paygate/backend/internal/bank"
 	"paygate/backend/internal/config"
 	"paygate/backend/internal/db"
 	"paygate/backend/internal/handlers"
@@ -45,7 +46,8 @@ func main() {
 	}
 	defer db.Close()
 
-	svc := service.NewPaymentService(cfg.BankAPIURL, cfg.BankSecret, cfg.FrontendURL, cfg.ThreeDSReturnURL)
+	bankProvider := bank.NewMockProvider(cfg.BankAPIURL)
+	svc := service.NewPaymentService(bankProvider, cfg.BankSecret, cfg.FrontendURL, cfg.ThreeDSReturnURL)
 	handler := handlers.NewPaymentHandler(svc, cfg.FrontendURL)
 
 	mux := http.NewServeMux()

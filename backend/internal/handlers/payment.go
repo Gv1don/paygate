@@ -19,7 +19,7 @@ type PaymentServiceInterface interface {
 	FailPayment(string, string) (*models.Payment, error)
 	RefundPayment(string, int64) (*models.Payment, error)
 	GetPayment(string) (*models.Payment, error)
-	Process3DSReturn(string) (*models.Payment, error)
+	Process3DSReturn(string, string) (*models.Payment, error)
 	VerifyWebhookSignature(models.WebhookPayload) bool
 }
 
@@ -100,10 +100,11 @@ func (h *PaymentHandler) HandleInitPayment(w http.ResponseWriter, r *http.Reques
 	}
 
 	resp := models.InitPaymentResponse{
-		BankSessionID: payment.BankSessionID,
-		PaymentURL:    h.frontendURL + "/pay?session=" + payment.BankSessionID,
-		ThreeDSURL:    payment.ThreeDSURL,
-		Status:        string(payment.Status),
+		BankSessionID:        payment.BankSessionID,
+		PaymentURL:           h.frontendURL + "/pay?session=" + payment.BankSessionID,
+		ThreeDSURL:           payment.ThreeDSURL,
+		ThreeDSServerTransID: payment.ThreeDSServerTransID,
+		Status:               string(payment.Status),
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -141,24 +142,28 @@ func (h *PaymentHandler) Handle3DSReturn(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	payment, err := h.svc.Process3DSReturn(req.BankSessionID)
+	payment, err := h.svc.Process3DSReturn(req.BankSessionID, req.CRes)
 	if err != nil {
 		log.Printf("3ds return processing error: %v", err)
 		code := http.StatusInternalServerError
-		if errors.Is(err, service.ErrPaymentNotFound) {
+		switch {
+		case errors.Is(err, service.ErrPaymentNotFound):
 			code = http.StatusNotFound
-		} else if errors.Is(err, service.ErrInvalidTransition) {
+		case errors.Is(err, service.ErrInvalidTransition):
 			code = http.StatusConflict
+		case errors.Is(err, service.ErrInvalidCRes):
+			code = http.StatusForbidden
 		}
 		writeError(w, code, err.Error())
 		return
 	}
 
 	resp := models.PaymentStatusResponse{
-		BankSessionID: payment.BankSessionID,
-		Status:        string(payment.Status),
-		Amount:        payment.Amount,
-		Currency:      payment.Currency,
+		BankSessionID:        payment.BankSessionID,
+		Status:               string(payment.Status),
+		Amount:               payment.Amount,
+		Currency:             payment.Currency,
+		ThreeDSServerTransID: payment.ThreeDSServerTransID,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -213,10 +218,11 @@ func (h *PaymentHandler) HandleConfirmPayment(w http.ResponseWriter, r *http.Req
 	}
 
 	resp := models.PaymentStatusResponse{
-		BankSessionID: payment.BankSessionID,
-		Status:        string(payment.Status),
-		Amount:        payment.Amount,
-		Currency:      payment.Currency,
+		BankSessionID:        payment.BankSessionID,
+		Status:               string(payment.Status),
+		Amount:               payment.Amount,
+		Currency:             payment.Currency,
+		ThreeDSServerTransID: payment.ThreeDSServerTransID,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -256,12 +262,13 @@ func (h *PaymentHandler) HandleGetPaymentStatus(w http.ResponseWriter, r *http.R
 	}
 
 	resp := models.PaymentStatusResponse{
-		BankSessionID: payment.BankSessionID,
-		Status:        string(payment.Status),
-		Amount:        payment.Amount,
-		Currency:      payment.Currency,
-		OrderID:       payment.OrderID,
-		ReturnURL:     payment.ReturnURL,
+		BankSessionID:        payment.BankSessionID,
+		Status:               string(payment.Status),
+		Amount:               payment.Amount,
+		Currency:             payment.Currency,
+		OrderID:              payment.OrderID,
+		ReturnURL:            payment.ReturnURL,
+		ThreeDSServerTransID: payment.ThreeDSServerTransID,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -313,10 +320,11 @@ func (h *PaymentHandler) HandleRefundPayment(w http.ResponseWriter, r *http.Requ
 	}
 
 	resp := models.PaymentStatusResponse{
-		BankSessionID: payment.BankSessionID,
-		Status:        string(payment.Status),
-		Amount:        payment.Amount,
-		Currency:      payment.Currency,
+		BankSessionID:        payment.BankSessionID,
+		Status:               string(payment.Status),
+		Amount:               payment.Amount,
+		Currency:             payment.Currency,
+		ThreeDSServerTransID: payment.ThreeDSServerTransID,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

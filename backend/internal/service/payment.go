@@ -9,6 +9,7 @@ import (
 	"log"
 	"time"
 
+	"paygate/backend/internal/bank"
 	"paygate/backend/internal/db"
 	"paygate/backend/internal/models"
 
@@ -18,21 +19,22 @@ import (
 var (
 	ErrPaymentNotFound     = errors.New("payment not found")
 	ErrInvalidToken        = errors.New("invalid 3ds token")
+	ErrInvalidCRes         = errors.New("invalid 3ds challenge response")
 	ErrInvalidTransition   = errors.New("invalid status transition")
 	ErrRefundExceedsAmount = errors.New("refund amount exceeds original amount")
 	ErrIdempotencyConflict = errors.New("payment with this idempotency key already exists")
 )
 
 type PaymentService struct {
-	bankAPIURL       string
+	bankProvider     bank.Provider
 	bankSecret       string
 	frontendURL      string
 	threeDSReturnURL string
 }
 
-func NewPaymentService(bankAPIURL, bankSecret, frontendURL, threeDSReturnURL string) *PaymentService {
+func NewPaymentService(bankProvider bank.Provider, bankSecret, frontendURL, threeDSReturnURL string) *PaymentService {
 	return &PaymentService{
-		bankAPIURL:       bankAPIURL,
+		bankProvider:     bankProvider,
 		bankSecret:       bankSecret,
 		frontendURL:      frontendURL,
 		threeDSReturnURL: threeDSReturnURL,
@@ -55,32 +57,44 @@ func (s *PaymentService) InitiatePayment(req models.InitPaymentRequest) (*models
 		return nil, fmt.Errorf("generate session id: %w", err)
 	}
 
-	threeDSURL := fmt.Sprintf("%s/auth/%s", s.bankAPIURL, sessionID)
+	bankResp, err := s.bankProvider.Register3DS(&bank.Register3DSRequest{
+		Amount:      req.Amount,
+		Currency:    req.Currency,
+		OrderID:     req.OrderID,
+		ReturnURL:   req.ReturnURL,
+		CallbackURL: s.threeDSReturnURL,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bank register 3ds: %w", err)
+	}
 
 	payment := &models.Payment{
-		BankSessionID:  sessionID,
-		OrderID:        req.OrderID,
-		UserID:         req.UserID,
-		Amount:         req.Amount,
-		Currency:       req.Currency,
-		Status:         models.StatusInitiated,
-		ThreeDSURL:     threeDSURL,
-		ReturnURL:      req.ReturnURL,
-		IdempotencyKey: req.IdempotencyKey,
-		CreatedAt:      time.Now().UTC(),
-		UpdatedAt:      time.Now().UTC(),
+		BankSessionID:        sessionID,
+		OrderID:              req.OrderID,
+		UserID:               req.UserID,
+		Amount:               req.Amount,
+		Currency:             req.Currency,
+		Status:               models.StatusInitiated,
+		ThreeDSURL:           bankResp.AcsURL,
+		ThreeDSServerTransID: bankResp.ThreeDSServerTransID,
+		CReq:                 bankResp.CReq,
+		ReturnURL:            req.ReturnURL,
+		IdempotencyKey:       req.IdempotencyKey,
+		CreatedAt:            time.Now().UTC(),
+		UpdatedAt:            time.Now().UTC(),
 	}
 
 	if err := db.Session.Query(`
 		INSERT INTO paygate.payments (
 			bank_session_id, order_id, user_id, amount, currency,
-			status, three_ds_url, return_url, idempotency_key,
-			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			status, three_ds_url, three_ds_server_trans_id, creq,
+			return_url, idempotency_key, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		payment.BankSessionID, payment.OrderID, payment.UserID,
 		payment.Amount, payment.Currency, string(payment.Status),
-		payment.ThreeDSURL, payment.ReturnURL, payment.IdempotencyKey,
+		payment.ThreeDSURL, payment.ThreeDSServerTransID, payment.CReq,
+		payment.ReturnURL, payment.IdempotencyKey,
 		payment.CreatedAt, payment.UpdatedAt,
 	).Exec(); err != nil {
 		return nil, fmt.Errorf("insert payment: %w", err)
@@ -92,7 +106,7 @@ func (s *PaymentService) InitiatePayment(req models.InitPaymentRequest) (*models
 	return payment, nil
 }
 
-func (s *PaymentService) Process3DSReturn(sessionID string) (*models.Payment, error) {
+func (s *PaymentService) Process3DSReturn(sessionID, cres string) (*models.Payment, error) {
 	payment, err := s.getPayment(sessionID)
 	if err != nil {
 		return nil, err
@@ -100,6 +114,18 @@ func (s *PaymentService) Process3DSReturn(sessionID string) (*models.Payment, er
 
 	if !payment.CanTransitionTo(models.StatusPending3DS) {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidTransition, payment.Status)
+	}
+
+	resp, err := s.bankProvider.Submit3DS(&bank.Submit3DSRequest{
+		BankSessionID:        sessionID,
+		CRes:                 cres,
+		ThreeDSServerTransID: payment.ThreeDSServerTransID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bank submit 3ds: %w", err)
+	}
+	if !resp.Success {
+		return nil, ErrInvalidCRes
 	}
 
 	payment.Status = models.StatusPending3DS
@@ -212,18 +238,20 @@ func (s *PaymentService) GetPayment(sessionID string) (*models.Payment, error) {
 
 func (s *PaymentService) getPayment(sessionID string) (*models.Payment, error) {
 	var payment models.Payment
-	var status, threeDSURL, failReason, returnURL, idempotencyKey string
+	var status, threeDSURL, threeDSServerTransID, creq, failReason, returnURL, idempotencyKey string
 
 	err := db.Session.Query(`
 		SELECT bank_session_id, order_id, user_id, amount, currency,
-			status, three_ds_url, fail_reason, return_url, idempotency_key,
+			status, three_ds_url, three_ds_server_trans_id, creq,
+			fail_reason, return_url, idempotency_key,
 			created_at, updated_at
 		FROM paygate.payments
 		WHERE bank_session_id = ?
 	`, sessionID).Scan(
 		&payment.BankSessionID, &payment.OrderID, &payment.UserID,
 		&payment.Amount, &payment.Currency, &status,
-		&threeDSURL, &failReason, &returnURL, &idempotencyKey,
+		&threeDSURL, &threeDSServerTransID, &creq,
+		&failReason, &returnURL, &idempotencyKey,
 		&payment.CreatedAt, &payment.UpdatedAt,
 	)
 	if err != nil {
@@ -235,6 +263,8 @@ func (s *PaymentService) getPayment(sessionID string) (*models.Payment, error) {
 
 	payment.Status = models.PaymentStatus(status)
 	payment.ThreeDSURL = threeDSURL
+	payment.ThreeDSServerTransID = threeDSServerTransID
+	payment.CReq = creq
 	payment.FailReason = failReason
 	payment.ReturnURL = returnURL
 	payment.IdempotencyKey = idempotencyKey
@@ -243,18 +273,20 @@ func (s *PaymentService) getPayment(sessionID string) (*models.Payment, error) {
 
 func (s *PaymentService) getPaymentByIdempotencyKey(key string) (*models.Payment, error) {
 	var payment models.Payment
-	var status, threeDSURL, failReason, returnURL, bankSessionID string
+	var status, threeDSURL, threeDSServerTransID, creq, failReason, returnURL, bankSessionID string
 
 	err := db.Session.Query(`
 		SELECT bank_session_id, order_id, user_id, amount, currency,
-			status, three_ds_url, fail_reason, return_url, idempotency_key,
+			status, three_ds_url, three_ds_server_trans_id, creq,
+			fail_reason, return_url, idempotency_key,
 			created_at, updated_at
 		FROM paygate.payments
 		WHERE idempotency_key = ? ALLOW FILTERING
 	`, key).Scan(
 		&bankSessionID, &payment.OrderID, &payment.UserID,
 		&payment.Amount, &payment.Currency, &status,
-		&threeDSURL, &failReason, &returnURL, &payment.IdempotencyKey,
+		&threeDSURL, &threeDSServerTransID, &creq,
+		&failReason, &returnURL, &payment.IdempotencyKey,
 		&payment.CreatedAt, &payment.UpdatedAt,
 	)
 	if err != nil {
@@ -267,6 +299,8 @@ func (s *PaymentService) getPaymentByIdempotencyKey(key string) (*models.Payment
 	payment.BankSessionID = bankSessionID
 	payment.Status = models.PaymentStatus(status)
 	payment.ThreeDSURL = threeDSURL
+	payment.ThreeDSServerTransID = threeDSServerTransID
+	payment.CReq = creq
 	payment.FailReason = failReason
 	payment.ReturnURL = returnURL
 	return &payment, nil

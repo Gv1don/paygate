@@ -18,6 +18,7 @@ type PaymentDetails = {
   amount: number
   currency: string
   return_url: string
+  three_ds_server_trans_id: string
 }
 
 function formatAmount(amount: number, currency: string): string {
@@ -58,6 +59,7 @@ function App() {
         amount: data.amount,
         currency: data.currency,
         return_url: data.return_url || "",
+        three_ds_server_trans_id: data.three_ds_server_trans_id || "",
       })
       setStatus(data.status)
       if (data.status === "INITIATED" || data.status === "PENDING_3DS") {
@@ -74,14 +76,25 @@ function App() {
     }
   }
 
+  const buildCRes = (transID: string): string => {
+    const header = btoa(JSON.stringify({ alg: "none" }))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+    const payload = btoa(JSON.stringify({
+      threeDSServerTransID: transID,
+      transStatus: "Y",
+    })).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+    return `${header}.${payload}.`
+  }
+
   const simulate3DS = async () => {
     setStep("waiting")
     try {
       // 1. Simulate 3DS authentication → PENDING_3DS
+      const cres = details ? buildCRes(details.three_ds_server_trans_id) : "simulated_cres"
       const cresRes = await fetch(`${API}/payments/3ds-return`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bank_session_id: sessionID, cres: "simulated_cres" }),
+        body: JSON.stringify({ bank_session_id: sessionID, cres }),
       })
       if (!cresRes.ok) {
         const data = await cresRes.json()

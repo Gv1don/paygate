@@ -18,6 +18,9 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.ScyllaKeyspace != "paygate" {
 		t.Errorf("expected default keyspace paygate, got %s", cfg.ScyllaKeyspace)
 	}
+	if cfg.ThreeDSReturnURL != "http://localhost/api/v1/payments/3ds-return" {
+		t.Errorf("expected default 3ds return url, got %s", cfg.ThreeDSReturnURL)
+	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("expected default log level info, got %s", cfg.LogLevel)
 	}
@@ -45,6 +48,7 @@ func TestLoad_FromEnv(t *testing.T) {
 	os.Setenv("SCYLLA_KEYSPACE", "test_paygate")
 	os.Setenv("BANK_API_URL", "https://sandbox.bank.com")
 	os.Setenv("BANK_SECRET", "super_secret_key")
+	os.Setenv("THREE_DS_RETURN_URL", "https://mysite.com/3ds-return")
 	os.Setenv("LOG_LEVEL", "debug")
 	os.Setenv("CORS_ORIGIN", "https://example.com")
 	os.Setenv("SWAGGER_HOST", "paygate.example.com")
@@ -71,6 +75,9 @@ func TestLoad_FromEnv(t *testing.T) {
 	}
 	if cfg.LogLevel != "debug" {
 		t.Errorf("expected debug, got %s", cfg.LogLevel)
+	}
+	if cfg.ThreeDSReturnURL != "https://mysite.com/3ds-return" {
+		t.Errorf("expected 3ds return url https://mysite.com/3ds-return, got %s", cfg.ThreeDSReturnURL)
 	}
 	if cfg.CORSOrigin != "https://example.com" {
 		t.Errorf("expected https://example.com, got %s", cfg.CORSOrigin)

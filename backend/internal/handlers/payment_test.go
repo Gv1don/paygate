@@ -20,7 +20,7 @@ type mockPaymentService struct {
 	failFn            func(string, string) (*models.Payment, error)
 	refundFn          func(string, int64) (*models.Payment, error)
 	getPaymentFn      func(string) (*models.Payment, error)
-	process3DSReturnFn func(string) (*models.Payment, error)
+	process3DSReturnFn func(string, string) (*models.Payment, error)
 	verifyWebhookFn   func(models.WebhookPayload) bool
 }
 
@@ -42,8 +42,8 @@ func (m *mockPaymentService) RefundPayment(id string, amount int64) (*models.Pay
 func (m *mockPaymentService) GetPayment(id string) (*models.Payment, error) {
 	return m.getPaymentFn(id)
 }
-func (m *mockPaymentService) Process3DSReturn(id string) (*models.Payment, error) {
-	return m.process3DSReturnFn(id)
+func (m *mockPaymentService) Process3DSReturn(id, cres string) (*models.Payment, error) {
+	return m.process3DSReturnFn(id, cres)
 }
 func (m *mockPaymentService) VerifyWebhookSignature(p models.WebhookPayload) bool {
 	return m.verifyWebhookFn(p)
@@ -165,6 +165,109 @@ func TestHandleInitPayment_ServiceError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestHandle3DSReturn_Success(t *testing.T) {
+	mock := &mockPaymentService{
+		process3DSReturnFn: func(id, cres string) (*models.Payment, error) {
+			p := basePayment()
+			p.Status = models.StatusPending3DS
+			return p, nil
+		},
+	}
+	handler := &PaymentHandler{svc: mock}
+
+	req := makeRequest(http.MethodPost, "/api/v1/payments/3ds-return",
+		`{"bank_session_id":"test","cres":"header.payload."}`)
+	w := httptest.NewRecorder()
+	handler.Handle3DSReturn(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp models.PaymentStatusResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Status != string(models.StatusPending3DS) {
+		t.Errorf("expected PENDING_3DS, got %s", resp.Status)
+	}
+}
+
+func TestHandle3DSReturn_InvalidCRes(t *testing.T) {
+	mock := &mockPaymentService{
+		process3DSReturnFn: func(id, cres string) (*models.Payment, error) {
+			return nil, service.ErrInvalidCRes
+		},
+	}
+	handler := &PaymentHandler{svc: mock}
+
+	req := makeRequest(http.MethodPost, "/api/v1/payments/3ds-return",
+		`{"bank_session_id":"test","cres":"garbage"}`)
+	w := httptest.NewRecorder()
+	handler.Handle3DSReturn(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandle3DSReturn_NotFound(t *testing.T) {
+	mock := &mockPaymentService{
+		process3DSReturnFn: func(id, cres string) (*models.Payment, error) {
+			return nil, service.ErrPaymentNotFound
+		},
+	}
+	handler := &PaymentHandler{svc: mock}
+
+	req := makeRequest(http.MethodPost, "/api/v1/payments/3ds-return",
+		`{"bank_session_id":"nonexistent","cres":"header.payload."}`)
+	w := httptest.NewRecorder()
+	handler.Handle3DSReturn(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestHandle3DSReturn_Conflict(t *testing.T) {
+	mock := &mockPaymentService{
+		process3DSReturnFn: func(id, cres string) (*models.Payment, error) {
+			return nil, service.ErrInvalidTransition
+		},
+	}
+	handler := &PaymentHandler{svc: mock}
+
+	req := makeRequest(http.MethodPost, "/api/v1/payments/3ds-return",
+		`{"bank_session_id":"test","cres":"header.payload."}`)
+	w := httptest.NewRecorder()
+	handler.Handle3DSReturn(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Errorf("expected 409, got %d", w.Code)
+	}
+}
+
+func TestHandle3DSReturn_MissingFields(t *testing.T) {
+	handler := &PaymentHandler{svc: &mockPaymentService{}}
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"empty bank_session_id", `{"bank_session_id":"","cres":"x.y."}`},
+		{"empty cres", `{"bank_session_id":"test","cres":""}`},
+		{"missing cres", `{"bank_session_id":"test"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := makeRequest(http.MethodPost, "/api/v1/payments/3ds-return", tt.body)
+			w := httptest.NewRecorder()
+			handler.Handle3DSReturn(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("expected 400, got %d", w.Code)
+			}
+		})
 	}
 }
 

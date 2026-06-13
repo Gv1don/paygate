@@ -58,21 +58,29 @@ func createKeyspace(session *gocql.Session, keyspace string) error {
 }
 
 func createTables(session *gocql.Session) error {
-	return session.Query(`
+	if err := session.Query(`
 		CREATE TABLE IF NOT EXISTS payments (
-			bank_session_id  text,
-			order_id         text,
-			user_id          text,
-			amount           bigint,
-			currency         text,
-			status           text,
-			three_ds_url     text,
-			fail_reason      text,
-			return_url       text,
-			idempotency_key  text,
-			created_at       timestamp,
-			updated_at       timestamp,
+			bank_session_id         text,
+			order_id                text,
+			user_id                 text,
+			amount                  bigint,
+			currency                text,
+			status                  text,
+			three_ds_url            text,
+			three_ds_server_trans_id text,
+			creq                    text,
+			fail_reason             text,
+			return_url              text,
+			idempotency_key         text,
+			created_at              timestamp,
+			updated_at              timestamp,
 			PRIMARY KEY (bank_session_id)
 		)
-	`).Exec()
+	`).Exec(); err != nil {
+		return err
+	}
+	for _, col := range []string{"three_ds_server_trans_id", "creq", "return_url", "idempotency_key"} {
+		session.Query(`ALTER TABLE payments ADD ` + col + ` text`).Exec()
+	}
+	return nil
 }

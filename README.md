@@ -24,6 +24,7 @@ Frontend (React + Tamagui)  →  Traefik  →  Backend (Go)  →  ScyllaDB
 | Метод | Путь | Описание |
 |-------|------|----------|
 | POST | `/api/v1/payments/init` | Инициализация платежа |
+| POST | `/api/v1/payments/3ds-return` | Обработка 3DS challenge response (cres) |
 | POST | `/api/v1/payments/confirm` | Подтверждение 3DS |
 | GET | `/api/v1/payments/status?bank_session_id=` | Статус платежа |
 | POST | `/api/v1/payments/refund` | Возврат средств |
@@ -98,6 +99,8 @@ curl http://localhost/health
 | `SCYLLA_KEYSPACE` | `paygate` | Имя keyspace |
 | `BANK_API_URL` | `https://bankapi.example.com` | URL API банка |
 | `BANK_SECRET` | — | Секретный ключ для вебхуков |
+| `THREE_DS_RETURN_URL` | `http://localhost/api/v1/payments/3ds-return` | URL для возврата 3DS |
+| `FRONTEND_URL` | `http://localhost` | URL фронтенда (для CORS) |
 | `LOG_LEVEL` | `info` | Уровень логирования |
 
 ## Тесты
