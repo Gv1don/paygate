@@ -16,7 +16,7 @@
 
 ```
 Frontend (React + Tamagui)  →  Traefik  →  Backend (Go)  →  ScyllaDB
-                                       ↘  Bank API (3DS, СБП, ЮMoney)
+                                       ↘  Bank API
 ```
 
 ## API Endpoints

@@ -1,4 +1,4 @@
-import { createTamagui, TamaguiProvider } from "@tamagui/core"
+import { createTamagui, TamaguiProvider, Text } from "@tamagui/core"
 import { config } from "@tamagui/config/v3"
 import React from "react"
 import ReactDOM from "react-dom/client"

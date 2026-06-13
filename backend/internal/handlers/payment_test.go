@@ -10,15 +10,18 @@ import (
 	"time"
 
 	"paygate/backend/internal/models"
+	"paygate/backend/internal/service"
 )
 
 type mockPaymentService struct {
-	initiateFn   func(models.InitPaymentRequest) (*models.Payment, error)
-	confirmFn    func(string, string) (*models.Payment, error)
-	completeFn   func(string) (*models.Payment, error)
-	failFn       func(string, string) (*models.Payment, error)
-	refundFn     func(string, int64) (*models.Payment, error)
-	getPaymentFn func(string) (*models.Payment, error)
+	initiateFn        func(models.InitPaymentRequest) (*models.Payment, error)
+	confirmFn         func(string, string) (*models.Payment, error)
+	completeFn        func(string) (*models.Payment, error)
+	failFn            func(string, string) (*models.Payment, error)
+	refundFn          func(string, int64) (*models.Payment, error)
+	getPaymentFn      func(string) (*models.Payment, error)
+	process3DSReturnFn func(string) (*models.Payment, error)
+	verifyWebhookFn   func(models.WebhookPayload) bool
 }
 
 func (m *mockPaymentService) InitiatePayment(req models.InitPaymentRequest) (*models.Payment, error) {
@@ -38,6 +41,12 @@ func (m *mockPaymentService) RefundPayment(id string, amount int64) (*models.Pay
 }
 func (m *mockPaymentService) GetPayment(id string) (*models.Payment, error) {
 	return m.getPaymentFn(id)
+}
+func (m *mockPaymentService) Process3DSReturn(id string) (*models.Payment, error) {
+	return m.process3DSReturnFn(id)
+}
+func (m *mockPaymentService) VerifyWebhookSignature(p models.WebhookPayload) bool {
+	return m.verifyWebhookFn(p)
 }
 
 func now() time.Time {
@@ -111,6 +120,9 @@ func TestHandleInitPayment_BadRequest(t *testing.T) {
 		{"negative amount", `{"order_id":"o1","amount":-100}`},
 		{"zero amount", `{"order_id":"o1","amount":0}`},
 		{"invalid json", `not json`},
+		{"amount too large", `{"order_id":"o1","amount":1000000000}`},
+		{"invalid currency", `{"order_id":"o1","amount":100,"currency":"RUBB"}`},
+		{"non-https return_url", `{"order_id":"o1","amount":100,"return_url":"http://evil.com"}`},
 	}
 
 	for _, tt := range tests {
@@ -185,7 +197,7 @@ func TestHandleConfirmPayment_Success(t *testing.T) {
 func TestHandleConfirmPayment_InvalidToken(t *testing.T) {
 	mock := &mockPaymentService{
 		confirmFn: func(id, token string) (*models.Payment, error) {
-			return nil, errors.New("invalid 3ds token")
+			return nil, service.ErrInvalidToken
 		},
 	}
 	handler := &PaymentHandler{svc: mock}
@@ -203,7 +215,7 @@ func TestHandleConfirmPayment_InvalidToken(t *testing.T) {
 func TestHandleConfirmPayment_NotFound(t *testing.T) {
 	mock := &mockPaymentService{
 		confirmFn: func(id, token string) (*models.Payment, error) {
-			return nil, errors.New("payment not found")
+			return nil, service.ErrPaymentNotFound
 		},
 	}
 	handler := &PaymentHandler{svc: mock}
@@ -246,7 +258,7 @@ func TestHandleGetPaymentStatus_Success(t *testing.T) {
 func TestHandleGetPaymentStatus_NotFound(t *testing.T) {
 	mock := &mockPaymentService{
 		getPaymentFn: func(id string) (*models.Payment, error) {
-			return nil, errors.New("payment not found")
+			return nil, service.ErrPaymentNotFound
 		},
 	}
 	handler := &PaymentHandler{svc: mock}
@@ -318,7 +330,7 @@ func TestHandleRefundPayment_InvalidAmount(t *testing.T) {
 func TestHandleRefundPayment_NotFound(t *testing.T) {
 	mock := &mockPaymentService{
 		refundFn: func(id string, amount int64) (*models.Payment, error) {
-			return nil, errors.New("payment not found")
+			return nil, service.ErrPaymentNotFound
 		},
 	}
 	handler := &PaymentHandler{svc: mock}
@@ -340,6 +352,7 @@ func TestHandleWebhook_Completed(t *testing.T) {
 			p.Status = models.StatusCompleted
 			return p, nil
 		},
+		verifyWebhookFn: func(p models.WebhookPayload) bool { return true },
 	}
 	handler := &PaymentHandler{svc: mock}
 
@@ -360,6 +373,7 @@ func TestHandleWebhook_Failed(t *testing.T) {
 			p.Status = models.StatusFailed
 			return p, nil
 		},
+		verifyWebhookFn: func(p models.WebhookPayload) bool { return true },
 	}
 	handler := &PaymentHandler{svc: mock}
 
@@ -374,7 +388,9 @@ func TestHandleWebhook_Failed(t *testing.T) {
 }
 
 func TestHandleWebhook_UnsupportedStatus(t *testing.T) {
-	handler := &PaymentHandler{svc: &mockPaymentService{}}
+	handler := &PaymentHandler{svc: &mockPaymentService{
+		verifyWebhookFn: func(p models.WebhookPayload) bool { return true },
+	}}
 
 	req := makeRequest(http.MethodPost, "/api/v1/webhooks/bank",
 		`{"bank_session_id":"test","status":"PENDING"}`)
@@ -389,8 +405,9 @@ func TestHandleWebhook_UnsupportedStatus(t *testing.T) {
 func TestHandleWebhook_NotFound(t *testing.T) {
 	mock := &mockPaymentService{
 		completeFn: func(id string) (*models.Payment, error) {
-			return nil, errors.New("payment not found")
+			return nil, service.ErrPaymentNotFound
 		},
+		verifyWebhookFn: func(p models.WebhookPayload) bool { return true },
 	}
 	handler := &PaymentHandler{svc: mock}
 

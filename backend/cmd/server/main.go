@@ -18,11 +18,13 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	_ "paygate/backend/docs"
 
@@ -43,22 +45,30 @@ func main() {
 	}
 	defer db.Close()
 
-	svc := service.NewPaymentService(cfg.BankAPIURL, cfg.BankSecret)
-	handler := handlers.NewPaymentHandler(svc)
+	svc := service.NewPaymentService(cfg.BankAPIURL, cfg.BankSecret, cfg.FrontendURL, cfg.ThreeDSReturnURL)
+	handler := handlers.NewPaymentHandler(svc, cfg.FrontendURL)
 
 	mux := http.NewServeMux()
 	handlers.RegisterRoutes(mux, handler)
 
-	mux.HandleFunc("/swagger/", httpSwagger.WrapHandler)
+	mux.HandleFunc("/swagger/", httpSwagger.Handler(
+		httpSwagger.URL("http://"+cfg.SwaggerHost+"/swagger/doc.json"),
+	))
+
+	rateLimiter := middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst)
 
 	var wrapped http.Handler = mux
-	wrapped = middleware.CORS(wrapped)
+	wrapped = middleware.CORS(cfg.CORSOrigin)(wrapped)
+	wrapped = rateLimiter.Middleware(wrapped)
 	wrapped = middleware.Logging(wrapped)
 	wrapped = middleware.Recovery(wrapped)
 
 	server := &http.Server{
-		Addr:    cfg.Addr(),
-		Handler: wrapped,
+		Addr:         cfg.Addr(),
+		Handler:      wrapped,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	go func() {
@@ -72,4 +82,12 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit
 	log.Printf("Received signal %s, shutting down...", sig)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		log.Printf("forced shutdown: %v", err)
+	}
+	log.Printf("Server stopped gracefully")
 }

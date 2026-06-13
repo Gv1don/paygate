@@ -21,6 +21,21 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Errorf("expected default log level info, got %s", cfg.LogLevel)
 	}
+	if cfg.CORSOrigin != "*" {
+		t.Errorf("expected default cors origin *, got %s", cfg.CORSOrigin)
+	}
+	if cfg.SwaggerHost != "localhost:8081" {
+		t.Errorf("expected default swagger host localhost:8081, got %s", cfg.SwaggerHost)
+	}
+	if cfg.RateLimitRPS != 100 {
+		t.Errorf("expected default rate limit 100, got %d", cfg.RateLimitRPS)
+	}
+	if cfg.RateLimitBurst != 200 {
+		t.Errorf("expected default rate limit burst 200, got %d", cfg.RateLimitBurst)
+	}
+	if cfg.FrontendURL != "http://localhost" {
+		t.Errorf("expected default frontend url http://localhost, got %s", cfg.FrontendURL)
+	}
 }
 
 func TestLoad_FromEnv(t *testing.T) {
@@ -31,6 +46,11 @@ func TestLoad_FromEnv(t *testing.T) {
 	os.Setenv("BANK_API_URL", "https://sandbox.bank.com")
 	os.Setenv("BANK_SECRET", "super_secret_key")
 	os.Setenv("LOG_LEVEL", "debug")
+	os.Setenv("CORS_ORIGIN", "https://example.com")
+	os.Setenv("SWAGGER_HOST", "paygate.example.com")
+	os.Setenv("RATE_LIMIT_RPS", "50")
+	os.Setenv("RATE_LIMIT_BURST", "100")
+	os.Setenv("FRONTEND_URL", "https://paygate.example.com")
 
 	cfg := Load()
 
@@ -51,6 +71,21 @@ func TestLoad_FromEnv(t *testing.T) {
 	}
 	if cfg.LogLevel != "debug" {
 		t.Errorf("expected debug, got %s", cfg.LogLevel)
+	}
+	if cfg.CORSOrigin != "https://example.com" {
+		t.Errorf("expected https://example.com, got %s", cfg.CORSOrigin)
+	}
+	if cfg.SwaggerHost != "paygate.example.com" {
+		t.Errorf("expected paygate.example.com, got %s", cfg.SwaggerHost)
+	}
+	if cfg.RateLimitRPS != 50 {
+		t.Errorf("expected rate limit 50, got %d", cfg.RateLimitRPS)
+	}
+	if cfg.RateLimitBurst != 100 {
+		t.Errorf("expected rate limit burst 100, got %d", cfg.RateLimitBurst)
+	}
+	if cfg.FrontendURL != "https://paygate.example.com" {
+		t.Errorf("expected frontend url https://paygate.example.com, got %s", cfg.FrontendURL)
 	}
 }
 

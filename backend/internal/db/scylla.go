@@ -8,10 +8,8 @@ import (
 	"github.com/gocql/gocql"
 )
 
-// Session — глобальная сессия ScyllaDB.
 var Session *gocql.Session
 
-// Connect устанавливает соединение с ScyllaDB и создаёт keyspace/таблицы.
 func Connect(addr, keyspace string) error {
 	cluster := gocql.NewCluster(addr)
 	cluster.Timeout = 10 * time.Second
@@ -43,7 +41,6 @@ func Connect(addr, keyspace string) error {
 	return nil
 }
 
-// Close закрывает сессию ScyllaDB.
 func Close() {
 	if Session != nil {
 		Session.Close()
@@ -63,16 +60,18 @@ func createKeyspace(session *gocql.Session, keyspace string) error {
 func createTables(session *gocql.Session) error {
 	return session.Query(`
 		CREATE TABLE IF NOT EXISTS payments (
-			bank_session_id text,
-			order_id        text,
-			user_id         text,
-			amount          bigint,
-			currency        text,
-			status          text,
-			three_ds_url    text,
-			fail_reason     text,
-			created_at      timestamp,
-			updated_at      timestamp,
+			bank_session_id  text,
+			order_id         text,
+			user_id          text,
+			amount           bigint,
+			currency         text,
+			status           text,
+			three_ds_url     text,
+			fail_reason      text,
+			return_url       text,
+			idempotency_key  text,
+			created_at       timestamp,
+			updated_at       timestamp,
 			PRIMARY KEY (bank_session_id)
 		)
 	`).Exec()

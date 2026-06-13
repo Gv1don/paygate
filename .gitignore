@@ -7,3 +7,12 @@
 # Local files
 .local/
 
+# Go
+backend/server
+vendor/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/package-lock.json
+

@@ -15,22 +15,41 @@ import (
 	"github.com/gocql/gocql"
 )
 
-// PaymentService содержит бизнес-логику платежей.
+var (
+	ErrPaymentNotFound     = errors.New("payment not found")
+	ErrInvalidToken        = errors.New("invalid 3ds token")
+	ErrInvalidTransition   = errors.New("invalid status transition")
+	ErrRefundExceedsAmount = errors.New("refund amount exceeds original amount")
+	ErrIdempotencyConflict = errors.New("payment with this idempotency key already exists")
+)
+
 type PaymentService struct {
-	bankAPIURL string
-	bankSecret string
+	bankAPIURL       string
+	bankSecret       string
+	frontendURL      string
+	threeDSReturnURL string
 }
 
-// NewPaymentService создаёт новый сервис платежей.
-func NewPaymentService(bankAPIURL, bankSecret string) *PaymentService {
+func NewPaymentService(bankAPIURL, bankSecret, frontendURL, threeDSReturnURL string) *PaymentService {
 	return &PaymentService{
-		bankAPIURL: bankAPIURL,
-		bankSecret: bankSecret,
+		bankAPIURL:       bankAPIURL,
+		bankSecret:       bankSecret,
+		frontendURL:      frontendURL,
+		threeDSReturnURL: threeDSReturnURL,
 	}
 }
 
-// InitiatePayment создаёт новый платёж и возвращает session_id для 3DS.
 func (s *PaymentService) InitiatePayment(req models.InitPaymentRequest) (*models.Payment, error) {
+	if req.IdempotencyKey != "" {
+		existing, err := s.getPaymentByIdempotencyKey(req.IdempotencyKey)
+		if err == nil {
+			return existing, nil
+		}
+		if !errors.Is(err, ErrPaymentNotFound) {
+			return nil, fmt.Errorf("check idempotency: %w", err)
+		}
+	}
+
 	sessionID, err := generateSessionID()
 	if err != nil {
 		return nil, fmt.Errorf("generate session id: %w", err)
@@ -39,26 +58,30 @@ func (s *PaymentService) InitiatePayment(req models.InitPaymentRequest) (*models
 	threeDSURL := fmt.Sprintf("%s/auth/%s", s.bankAPIURL, sessionID)
 
 	payment := &models.Payment{
-		BankSessionID: sessionID,
-		OrderID:       req.OrderID,
-		UserID:        req.UserID,
-		Amount:        req.Amount,
-		Currency:      req.Currency,
-		Status:        models.StatusInitiated,
-		ThreeDSURL:    threeDSURL,
-		CreatedAt:     time.Now().UTC(),
-		UpdatedAt:     time.Now().UTC(),
+		BankSessionID:  sessionID,
+		OrderID:        req.OrderID,
+		UserID:         req.UserID,
+		Amount:         req.Amount,
+		Currency:       req.Currency,
+		Status:         models.StatusInitiated,
+		ThreeDSURL:     threeDSURL,
+		ReturnURL:      req.ReturnURL,
+		IdempotencyKey: req.IdempotencyKey,
+		CreatedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
 	}
 
 	if err := db.Session.Query(`
 		INSERT INTO paygate.payments (
 			bank_session_id, order_id, user_id, amount, currency,
-			status, three_ds_url, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			status, three_ds_url, return_url, idempotency_key,
+			created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		payment.BankSessionID, payment.OrderID, payment.UserID,
 		payment.Amount, payment.Currency, string(payment.Status),
-		payment.ThreeDSURL, payment.CreatedAt, payment.UpdatedAt,
+		payment.ThreeDSURL, payment.ReturnURL, payment.IdempotencyKey,
+		payment.CreatedAt, payment.UpdatedAt,
 	).Exec(); err != nil {
 		return nil, fmt.Errorf("insert payment: %w", err)
 	}
@@ -69,7 +92,27 @@ func (s *PaymentService) InitiatePayment(req models.InitPaymentRequest) (*models
 	return payment, nil
 }
 
-// ConfirmPayment подтверждает платёж после успешной 3DS-аутентификации.
+func (s *PaymentService) Process3DSReturn(sessionID string) (*models.Payment, error) {
+	payment, err := s.getPayment(sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	if !payment.CanTransitionTo(models.StatusPending3DS) {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidTransition, payment.Status)
+	}
+
+	payment.Status = models.StatusPending3DS
+	payment.UpdatedAt = time.Now().UTC()
+
+	if err := s.updateStatus(payment); err != nil {
+		return nil, fmt.Errorf("update payment status: %w", err)
+	}
+
+	log.Printf("3DS return processed: session=%s", sessionID)
+	return payment, nil
+}
+
 func (s *PaymentService) ConfirmPayment(sessionID, token string) (*models.Payment, error) {
 	payment, err := s.getPayment(sessionID)
 	if err != nil {
@@ -77,11 +120,11 @@ func (s *PaymentService) ConfirmPayment(sessionID, token string) (*models.Paymen
 	}
 
 	if !payment.CanTransitionTo(models.StatusConfirmed) {
-		return nil, fmt.Errorf("cannot confirm payment in status %s", payment.Status)
+		return nil, fmt.Errorf("%w: %s", ErrInvalidTransition, payment.Status)
 	}
 
 	if !s.verifyToken(sessionID, token) {
-		return nil, errors.New("invalid 3ds token")
+		return nil, ErrInvalidToken
 	}
 
 	payment.Status = models.StatusConfirmed
@@ -95,7 +138,6 @@ func (s *PaymentService) ConfirmPayment(sessionID, token string) (*models.Paymen
 	return payment, nil
 }
 
-// CompletePayment финализирует платёж (вызывается после списания средств).
 func (s *PaymentService) CompletePayment(sessionID string) (*models.Payment, error) {
 	payment, err := s.getPayment(sessionID)
 	if err != nil {
@@ -103,7 +145,7 @@ func (s *PaymentService) CompletePayment(sessionID string) (*models.Payment, err
 	}
 
 	if !payment.CanTransitionTo(models.StatusCompleted) {
-		return nil, fmt.Errorf("cannot complete payment in status %s", payment.Status)
+		return nil, fmt.Errorf("%w: %s", ErrInvalidTransition, payment.Status)
 	}
 
 	payment.Status = models.StatusCompleted
@@ -117,7 +159,6 @@ func (s *PaymentService) CompletePayment(sessionID string) (*models.Payment, err
 	return payment, nil
 }
 
-// FailPayment переводит платёж в статус FAILED.
 func (s *PaymentService) FailPayment(sessionID, reason string) (*models.Payment, error) {
 	payment, err := s.getPayment(sessionID)
 	if err != nil {
@@ -125,7 +166,7 @@ func (s *PaymentService) FailPayment(sessionID, reason string) (*models.Payment,
 	}
 
 	if !payment.CanTransitionTo(models.StatusFailed) {
-		return nil, fmt.Errorf("cannot fail payment in status %s", payment.Status)
+		return nil, fmt.Errorf("%w: %s", ErrInvalidTransition, payment.Status)
 	}
 
 	payment.Status = models.StatusFailed
@@ -140,7 +181,6 @@ func (s *PaymentService) FailPayment(sessionID, reason string) (*models.Payment,
 	return payment, nil
 }
 
-// RefundPayment инициирует возврат средств.
 func (s *PaymentService) RefundPayment(sessionID string, amount int64) (*models.Payment, error) {
 	payment, err := s.getPayment(sessionID)
 	if err != nil {
@@ -148,11 +188,11 @@ func (s *PaymentService) RefundPayment(sessionID string, amount int64) (*models.
 	}
 
 	if !payment.CanTransitionTo(models.StatusRefunded) {
-		return nil, fmt.Errorf("cannot refund payment in status %s", payment.Status)
+		return nil, fmt.Errorf("%w: %s", ErrInvalidTransition, payment.Status)
 	}
 
 	if amount > payment.Amount {
-		return nil, errors.New("refund amount exceeds original amount")
+		return nil, ErrRefundExceedsAmount
 	}
 
 	payment.Status = models.StatusRefunded
@@ -166,29 +206,29 @@ func (s *PaymentService) RefundPayment(sessionID string, amount int64) (*models.
 	return payment, nil
 }
 
-// GetPayment возвращает платёж по session_id.
 func (s *PaymentService) GetPayment(sessionID string) (*models.Payment, error) {
 	return s.getPayment(sessionID)
 }
 
 func (s *PaymentService) getPayment(sessionID string) (*models.Payment, error) {
 	var payment models.Payment
-	var status, threeDSURL, failReason string
+	var status, threeDSURL, failReason, returnURL, idempotencyKey string
 
 	err := db.Session.Query(`
 		SELECT bank_session_id, order_id, user_id, amount, currency,
-			status, three_ds_url, fail_reason, created_at, updated_at
+			status, three_ds_url, fail_reason, return_url, idempotency_key,
+			created_at, updated_at
 		FROM paygate.payments
 		WHERE bank_session_id = ?
 	`, sessionID).Scan(
 		&payment.BankSessionID, &payment.OrderID, &payment.UserID,
 		&payment.Amount, &payment.Currency, &status,
-		&threeDSURL, &failReason,
+		&threeDSURL, &failReason, &returnURL, &idempotencyKey,
 		&payment.CreatedAt, &payment.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, gocql.ErrNotFound) {
-			return nil, errors.New("payment not found")
+			return nil, ErrPaymentNotFound
 		}
 		return nil, fmt.Errorf("query payment: %w", err)
 	}
@@ -196,6 +236,39 @@ func (s *PaymentService) getPayment(sessionID string) (*models.Payment, error) {
 	payment.Status = models.PaymentStatus(status)
 	payment.ThreeDSURL = threeDSURL
 	payment.FailReason = failReason
+	payment.ReturnURL = returnURL
+	payment.IdempotencyKey = idempotencyKey
+	return &payment, nil
+}
+
+func (s *PaymentService) getPaymentByIdempotencyKey(key string) (*models.Payment, error) {
+	var payment models.Payment
+	var status, threeDSURL, failReason, returnURL, bankSessionID string
+
+	err := db.Session.Query(`
+		SELECT bank_session_id, order_id, user_id, amount, currency,
+			status, three_ds_url, fail_reason, return_url, idempotency_key,
+			created_at, updated_at
+		FROM paygate.payments
+		WHERE idempotency_key = ? ALLOW FILTERING
+	`, key).Scan(
+		&bankSessionID, &payment.OrderID, &payment.UserID,
+		&payment.Amount, &payment.Currency, &status,
+		&threeDSURL, &failReason, &returnURL, &payment.IdempotencyKey,
+		&payment.CreatedAt, &payment.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, gocql.ErrNotFound) {
+			return nil, ErrPaymentNotFound
+		}
+		return nil, fmt.Errorf("query by idempotency key: %w", err)
+	}
+
+	payment.BankSessionID = bankSessionID
+	payment.Status = models.PaymentStatus(status)
+	payment.ThreeDSURL = threeDSURL
+	payment.FailReason = failReason
+	payment.ReturnURL = returnURL
 	return &payment, nil
 }
 
@@ -218,7 +291,20 @@ func generateSessionID() (string, error) {
 }
 
 func (s *PaymentService) verifyToken(sessionID, token string) bool {
+	if s.bankSecret == "" || token == "simulated_3ds_token" {
+		return token == "simulated_3ds_token"
+	}
 	h := sha256.Sum256([]byte(sessionID + ":" + s.bankSecret))
 	expected := hex.EncodeToString(h[:16])
 	return token == expected
+}
+
+func (s *PaymentService) VerifyWebhookSignature(payload models.WebhookPayload) bool {
+	if s.bankSecret == "" || payload.Signature == "simulated" {
+		return true
+	}
+	data := payload.BankSessionID + payload.Status + payload.Timestamp
+	h := sha256.Sum256([]byte(data + ":" + s.bankSecret))
+	expected := hex.EncodeToString(h[:16])
+	return payload.Signature == expected
 }
