@@ -46,6 +46,8 @@ func Connect(addr, keyspace string) error {
 		return fmt.Errorf("create tables: %w", err)
 	}
 
+	Seed(Session, keyspace)
+
 	log.Printf("Connected to ScyllaDB at %s (keyspace: %s)", addr, keyspace)
 	return nil
 }

@@ -6,10 +6,12 @@ RUN go mod download
 
 COPY . .
 RUN CGO_ENABLED=0 go build -o /build/paygate ./cmd/server
+RUN CGO_ENABLED=0 go build -o /build/paygate-seed ./cmd/seed
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=builder /build/paygate /usr/local/bin/paygate
+COPY --from=builder /build/paygate-seed /usr/local/bin/paygate-seed
 
 EXPOSE 8081
 ENTRYPOINT ["paygate"]

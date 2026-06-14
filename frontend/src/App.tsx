@@ -64,7 +64,7 @@ function App() {
       setStatus(data.status)
       if (data.status === "INITIATED" || data.status === "PENDING_3DS") {
         setStep("3ds")
-      } else if (data.status === "COMPLETED" || data.status === "FAILED") {
+      } else if (data.status === "COMPLETED" || data.status === "FAILED" || data.status === "REFUNDED") {
         setStep("done")
       } else {
         setStep("waiting")
@@ -162,7 +162,7 @@ function App() {
           const data = await res.json()
           if (!res.ok) continue
           setStatus(data.status)
-          if (data.status === "COMPLETED" || data.status === "FAILED") {
+          if (data.status === "COMPLETED" || data.status === "FAILED" || data.status === "REFUNDED") {
             setStep("done")
             return
           }
@@ -305,9 +305,9 @@ function App() {
             <Text
               fontSize="$8"
               fontWeight="700"
-              color={status === "COMPLETED" ? "$green10" : "$red10"}
+              color={status === "COMPLETED" ? "$green10" : status === "REFUNDED" ? "$orange10" : "$red10"}
             >
-              {status === "COMPLETED" ? "Payment Successful" : "Payment Failed"}
+              {status === "COMPLETED" ? "Payment Successful" : status === "REFUNDED" ? "Payment Refunded" : "Payment Failed"}
             </Text>
             <YStack space="$2" width="100%" backgroundColor="$gray2" padding="$3" borderRadius="$4">
               <XStack justifyContent="space-between">
@@ -413,6 +413,20 @@ function StatusIcon({ status }: { status: string }) {
         justifyContent="center"
       >
         <Text fontSize="$9">✓</Text>
+      </XStack>
+    )
+  }
+  if (status === "REFUNDED") {
+    return (
+      <XStack
+        width={64}
+        height={64}
+        borderRadius={32}
+        backgroundColor="$orange3"
+        alignItems="center"
+        justifyContent="center"
+      >
+        <Text fontSize="$9">↩</Text>
       </XStack>
     )
   }

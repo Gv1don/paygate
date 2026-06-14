@@ -103,6 +103,41 @@ curl http://localhost/health
 | `FRONTEND_URL` | `http://localhost` | URL фронтенда (для CORS) |
 | `LOG_LEVEL` | `info` | Уровень логирования |
 
+## Тестовые данные
+
+При первом запуске backend автоматически создаёт 10 тестовых платежей в ScyllaDB.
+
+### Запустить сидер вручную
+
+```bash
+# Без флага — добавит данные, только если таблица пуста
+cd backend && go run ./cmd/seed
+
+# С флагом --force — очистит таблицу и добавит заново
+cd backend && go run ./cmd/seed --force
+```
+
+### Из Docker
+
+```bash
+docker exec -it paygate-backend sh -c "paygate-seed --force"
+```
+
+### Список тестовых session_id
+
+| Статус | session_id |
+|--------|-----------|
+| INITIATED | `bank_sys_seed000000000000000000000000000000000000000000000001` |
+| INITIATED | `bank_sys_seed000000000000000000000000000000000000000000000002` |
+| PENDING_3DS | `bank_sys_seed000000000000000000000000000000000000000000000003` |
+| PENDING_3DS | `bank_sys_seed000000000000000000000000000000000000000000000004` |
+| CONFIRMED | `bank_sys_seed000000000000000000000000000000000000000000000005` |
+| CONFIRMED | `bank_sys_seed000000000000000000000000000000000000000000000006` |
+| COMPLETED | `bank_sys_seed000000000000000000000000000000000000000000000007` |
+| COMPLETED | `bank_sys_seed000000000000000000000000000000000000000000000008` |
+| REFUNDED | `bank_sys_seed000000000000000000000000000000000000000000000009` |
+| REFUNDED | `bank_sys_seed000000000000000000000000000000000000000000000010` |
+
 ## Тесты
 
 ```bash
