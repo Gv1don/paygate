@@ -17,7 +17,16 @@ func Connect(addr, keyspace string) error {
 	cluster.Consistency = gocql.LocalQuorum
 	cluster.NumConns = 3
 
-	session, err := cluster.CreateSession()
+	var session *gocql.Session
+	var err error
+	for i := 0; i < 12; i++ {
+		session, err = cluster.CreateSession()
+		if err == nil {
+			break
+		}
+		log.Printf("retrying scylladb connection (%d/12): %v", i+1, err)
+		time.Sleep(5 * time.Second)
+	}
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}

@@ -48,6 +48,7 @@ services:
       FRONTEND_URL: "http://localhost"
       RATE_LIMIT_RPS: "100"
       RATE_LIMIT_BURST: "200"
+    restart: unless-stopped
     depends_on:
       - scylladb
     networks:
